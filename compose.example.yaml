@@ -1,0 +1,17 @@
+services:
+  tastarr:
+    build: .
+    image: tastarr:local
+    container_name: tastarr
+    restart: unless-stopped
+    # Same UID:GID as Transmission, so partial downloads are readable.
+    user: "1000:1000"
+    env_file: .env
+    environment:
+      TASTARR_TRANSMISSION_URL: http://transmission:9091/transmission/rpc
+      TASTARR_SONARR_URL: http://sonarr:8989
+      TASTARR_RADARR_URL: http://radarr:7878
+    volumes:
+      - ./data:/data
+      # Mount at the path Transmission reports for its downloads, read-only.
+      - /path/to/downloads:/downloads:ro

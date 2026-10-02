@@ -1,0 +1,42 @@
+[project]
+name = "tastarr"
+dynamic = ["version"]
+description = "Reject fake and malicious Sonarr/Radarr downloads in Transmission by checking file names and the first bytes of each video file"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Vaevictus" }]
+keywords = ["sonarr", "radarr", "transmission", "torrent", "malware"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: No Input/Output (Daemon)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Video",
+]
+dependencies = []
+
+[project.scripts]
+tastarr = "tastarr.__main__:main"
+
+[project.urls]
+Repository = "https://github.com/Vaevictus/tastarr"
+Issues = "https://github.com/Vaevictus/tastarr/issues"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/tastarr/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tastarr"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
