@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1 (2026-10-02)
+
+- Container image published to `ghcr.io/vaevictus/tastarr` for linux/amd64 and
+  linux/arm64 on each release. Tags: `latest`, `<major>.<minor>`, `<version>`.
+  No code changes.
+
 ## 0.1.0 (2026-10-02)
 
 First release.

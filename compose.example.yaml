@@ -1,7 +1,6 @@
 services:
   tastarr:
-    build: .
-    image: tastarr:local
+    image: ghcr.io/vaevictus/tastarr:latest
     container_name: tastarr
     restart: unless-stopped
     # Same UID:GID as Transmission, so partial downloads are readable.

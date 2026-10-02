@@ -92,13 +92,19 @@ it. Keep that option enabled as a second check.
 
 ### Docker
 
+Images for linux/amd64 and linux/arm64 are published to
+`ghcr.io/vaevictus/tastarr` on each release (`latest`, `<major>.<minor>`, `<version>`).
+
 ```sh
-git clone https://github.com/Vaevictus/tastarr.git
-cd tastarr
-cp .env.example .env                  # credentials
-cp compose.example.yaml compose.yaml  # URLs, user, volumes
-docker compose up -d --build
+curl -LO https://raw.githubusercontent.com/Vaevictus/tastarr/main/compose.example.yaml
+curl -L -o .env https://raw.githubusercontent.com/Vaevictus/tastarr/main/.env.example
+mv compose.example.yaml compose.yaml  # URLs, user, volumes
+$EDITOR .env                          # credentials
+docker compose up -d
 ```
+
+To build the image yourself instead, replace `image:` with `build: .` in a clone of this
+repository.
 
 In `compose.yaml`:
 
