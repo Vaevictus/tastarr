@@ -46,15 +46,30 @@ def torrent(h, files, have=(), status=4, labels=("tv",), percent=0.1, metadata=1
     }
 
 
+RUNNING = (4, 6)  # downloading, seeding
+
+
 class FakeTransmission:
+    """Mimics Transmission 4's RPC: ``torrent-stop`` only flags the torrent and the
+    stop happens on the next idle tick, and ``torrent-start``/``torrent-start-now``
+    are ignored for a torrent that is still running."""
+
     def __init__(self, *torrents):
         self.t = {t["hash_string"]: t for t in torrents}
         self.calls = []
+        self.stopping = set()
 
     def session(self, fields):
         return {"incomplete_dir": "/downloads/incomplete", "incomplete_dir_enabled": True}
 
+    def tick(self):
+        for h in self.stopping:
+            if h in self.t:
+                self.t[h]["status"] = 0
+        self.stopping.clear()
+
     def torrents(self, fields, hashes=None):
+        self.tick()  # a cycle is far longer than Transmission's 1 s idle tick
         return [copy.deepcopy(t) for t in self.t.values()]
 
     def set(self, hashes, **fields):
@@ -63,15 +78,18 @@ class FakeTransmission:
 
     def start_now(self, hashes):
         self.calls.append(("start_now", hashes[0]))
-        self.t[hashes[0]]["status"] = 4
+        if self.t[hashes[0]]["status"] not in RUNNING:
+            self.t[hashes[0]]["status"] = 4
 
     def start(self, hashes):
         self.calls.append(("start", hashes[0]))
-        self.t[hashes[0]]["status"] = 3
+        if self.t[hashes[0]]["status"] not in RUNNING:
+            self.t[hashes[0]]["status"] = 3
 
     def stop(self, hashes):
         self.calls.append(("stop", hashes[0]))
-        self.t[hashes[0]]["status"] = 0
+        if self.t[hashes[0]]["status"] != 0:
+            self.stopping.add(hashes[0])
 
 
 class FakeArr:
@@ -205,14 +223,14 @@ class StageOne(unittest.TestCase):
         h.cycle()
         self.assertEqual(h.phase("bf"), TASTING)
         self.assertEqual(
-            h.tr.calls[-3:],
+            h.tr.calls[-2:],
             [
                 ("set", "bf", {"sequential_download": False, "sequential_download_from_piece": 0}),
                 ("stop", "bf"),
-                ("start", "bf"),
             ],
         )
-        h.tr.t["bf"]["status"] = 3
+        h.cycle()
+        self.assertEqual(h.tr.calls[-1], ("start", "bf"))  # re-queued once stopped
         h.cycle()
         self.assertEqual(len(h.tr.calls), 5)  # relaxed: not force-started again
         h.tr.t["bf"]["pieces"] = bitfield(10, range(10))  # completed: tasted at last
@@ -232,10 +250,62 @@ class Queue(unittest.TestCase):
         h.disk["/downloads/incomplete/Show.S01E00.mkv.part"] = MKV
         h.cycle()
         self.assertEqual(h.phase("c0"), CLEARED)
-        tail = h.tr.calls[-4:]
+        tail = h.tr.calls[-3:]
         self.assertIn(("stop", "c0"), tail)
-        self.assertIn(("start", "c0"), tail)  # re-queued
         self.assertIn(("start_now", "c2"), tail)  # freed slot used
+        h.cycle()
+        self.assertEqual(h.tr.calls[-1], ("start", "c0"))  # re-queued
+        self.assertEqual(h.tr.t["c0"]["status"], 3)
+
+    def test_cleared_bumped_torrent_ends_up_queued_not_stopped(self):
+        # Regression (0.1.1): stop + start in one go left every bumped torrent
+        # stopped, because Transmission ignores a start while the stop is pending.
+        t = torrent("c5", [("Show.S01E05.mkv", 4 * PIECE)], status=3)
+        h = Harness(t)
+        h.cycle()
+        self.assertEqual(h.tr.t["c5"]["status"], 4)  # force-started
+        h.tr.t["c5"]["pieces"] = bitfield(4, [0])
+        h.disk["/downloads/incomplete/Show.S01E05.mkv.part"] = MKV
+        h.cycle()
+        self.assertEqual(h.phase("c5"), CLEARED)
+        h.cycle()
+        h.cycle()
+        self.assertEqual(h.tr.t["c5"]["status"], 3)  # back in the queue
+        self.assertNotIn("requeue", h.state.torrents["c5"])
+        self.assertEqual([c[0] for c in h.tr.calls].count("start"), 1)
+
+    def test_relaxed_bumped_torrent_ends_up_queued_not_stopped(self):
+        h = Harness(torrent("c6", [("Show.S01E06.mkv", 10 * PIECE)], status=3), taste_timeout=60)
+        h.cycle(advance=61)
+        h.cycle()  # relax
+        h.cycle()
+        self.assertEqual(h.tr.t["c6"]["status"], 3)
+        self.assertEqual(h.phase("c6"), TASTING)
+
+    def test_requeue_skipped_if_something_else_restarted_it(self):
+        t = torrent("c7", [("Show.S01E07.mkv", 4 * PIECE)], status=3)
+        h = Harness(t)
+        h.cycle()
+        h.tr.t["c7"]["pieces"] = bitfield(4, [0])
+        h.disk["/downloads/incomplete/Show.S01E07.mkv.part"] = MKV
+        h.cycle()
+        h.tr.tick()
+        h.tr.t["c7"]["status"] = 4  # e.g. resumed by hand before Tastarr got to it
+        h.cycle()
+        self.assertNotIn(("start", "c7"), h.tr.calls)
+        self.assertNotIn("requeue", h.state.torrents["c7"])
+
+    def test_rejected_while_requeue_pending_stays_stopped(self):
+        h = Harness(torrent("c8", [("Show.S01E08.mkv", 10 * PIECE)], status=3), taste_timeout=60)
+        h.cycle(advance=61)
+        h.cycle()  # relax: stop issued, requeue pending
+        h.tr.t["c8"]["pieces"] = bitfield(10, range(10))
+        h.disk["/downloads/incomplete/Show.S01E08.mkv.part"] = EXE
+        h.cycle()  # requeued, then tasted and rejected in the same cycle
+        h.cycle()
+        h.cycle()
+        self.assertEqual(h.phase("c8"), REJECTED)
+        self.assertEqual(h.tr.t["c8"]["status"], 0)
 
 
 class Disposal(unittest.TestCase):

@@ -69,8 +69,8 @@ categories); other torrents are never touched.
    - **No owner.** If no Sonarr or Radarr queue entry matches the torrent within
      `TASTARR_OWNER_GRACE`, it is left stopped and labelled, for manual review.
    - **Slow first piece.** If the first piece has not arrived after
-     `TASTARR_TASTE_TIMEOUT`, Tastarr restores the torrent's settings and stops
-     pushing, but still checks the torrent when the piece arrives. That happens at the
+     `TASTARR_TASTE_TIMEOUT`, Tastarr restores the torrent's settings (and puts it back
+     in the queue if it started it early) and stops pushing, but still checks the torrent when the piece arrives. That happens at the
      latest on completion, before the *arr imports it.
 
 Sonarr and Radarr need no configuration changes. Tastarr finds the owner of a torrent

@@ -21,7 +21,10 @@ verdict before the *arr imports it.
 A rejected torrent is stopped at once, then failed through the *arr that
 owns it (remove from client + blocklist + search again, with a cap), so the
 *arr knows why it vanished. A cleared torrent gets its original settings back
-and, if it was force-started, goes back into the queue.
+and, if it was force-started, goes back into the queue: stopped now, started
+again next cycle. Transmission's ``torrent-stop`` only takes effect on its next
+idle tick and ``torrent-start`` ignores a torrent that is still running, so
+both in one go would leave it stopped.
 """
 
 from __future__ import annotations
@@ -59,7 +62,8 @@ FIELDS = [
 SESSION_FIELDS = ["incomplete_dir", "incomplete_dir_enabled"]
 RESTORABLE = ("sequential_download", "sequential_download_from_piece")
 
-QUEUED_DOWNLOAD = 3  # Transmission torrent status
+# Transmission torrent status
+STOPPED, CHECK_WAIT, CHECK, QUEUED_DOWNLOAD = 0, 1, 2, 3
 
 NEW, TASTING = "new", "tasting"
 REJECTED = "rejected"  # stopped, waiting for an *arr to claim it
@@ -141,9 +145,11 @@ class Taster:
                     "first_seen": now,
                     "last_seen": now,
                 }
-            if rec["phase"] in FINAL:
-                continue
             try:
+                if rec.get("requeue"):
+                    self.requeue(t, rec)
+                if rec["phase"] in FINAL:
+                    continue
                 self.step(t, rec, session, now)
             except (TransmissionError, ArrError, OSError) as exc:
                 log.warning("%s: %s (will retry)", t["name"], exc)
@@ -265,8 +271,18 @@ class Taster:
                 self.tr.set([h], **orig)
             if rec.get("bumped") and (t.get("percent_done") or 0) < 1:
                 self.tr.stop([h])
-                self.tr.start([h])  # back into the queue rather than jumping it
+                rec["requeue"] = True  # started again once the stop has happened
         rec["bumped"] = False
+
+    def requeue(self, t: dict[str, Any], rec: dict[str, Any]) -> None:
+        """Second half of restore(): start a bumped torrent again, through the queue."""
+        if t.get("status") in (CHECK_WAIT, CHECK):
+            return  # Transmission ignores a start while verifying; try next cycle
+        if t.get("status") == STOPPED:
+            self.tr.start([t["hash_string"]])
+            log.info("re-queued %s", t["name"])
+        # Anything else: it was started again by someone else; leave it.
+        rec.pop("requeue", None)
 
     def relax(self, t: dict[str, Any], rec: dict[str, Any]) -> None:
         """Stop pushing for the first piece, but keep watching for it."""
@@ -293,6 +309,7 @@ class Taster:
         h = t["hash_string"]
         detail = "; ".join(reasons)
         rec.update(stage=stage, reasons=reasons, rejected_at=now, bumped=False)
+        rec.pop("requeue", None)  # stays stopped
         if self.cfg.dry_run:
             rec["phase"] = WOULD_REJECT
             log.warning("WOULD REJECT %s (%s): %s", t["name"], stage, detail)
